@@ -171,7 +171,16 @@ body{font-family:'DM Sans',sans-serif;color:var(--text-dark);background:var(--cr
   <div class="topbar"><h1 id="page-title">Dashboard</h1><div id="topbar-actions"></div><span style="font-size:0.75rem;color:var(--text-lt);" id="topbar-date"></span></div>
   <div class="content">
     <div class="page active" id="pg-dashboard"><div id="dash-stats" class="stats-grid"></div><div id="dash-panels" style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;"></div></div>
-    <div class="page" id="pg-members"><div style="margin-bottom:1rem;text-align:right;"><button class="btn btn-primary" onclick="openAddMember()" style="padding:0.6rem 1.25rem;font-size:0.875rem;">+ Add New Member</button></div><div class="search-bar"><input type="text" placeholder="Search by name, email, or member number..." id="m-search" oninput="loadMembers()"><select id="m-filter" onchange="loadMembers()"><option value="">All</option><option value="active">Active</option><option value="pending_payment">Pending</option><option value="lapsed">Lapsed</option><option value="cancelled">Cancelled</option></select></div><div class="card" style="padding:0;overflow-x:auto;" id="m-table"></div></div>
+    <div class="page" id="pg-members">
+      <div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:1rem;">
+        <input type="text" placeholder="Search..." id="m-search" oninput="loadMembers()" style="width:250px;padding:0.5rem 0.75rem;border:1px solid var(--border);border-radius:6px;font-size:0.875rem;font-family:inherit;">
+        <select id="m-filter" onchange="loadMembers()" style="padding:0.5rem 0.75rem;border:1px solid var(--border);border-radius:6px;font-size:0.8125rem;font-family:inherit;background:var(--white);">
+          <option value="">All</option><option value="active">Active</option><option value="pending_payment">Pending</option><option value="lapsed">Lapsed</option><option value="cancelled">Cancelled</option>
+        </select>
+        <button class="btn btn-primary" onclick="openAddMember()">+ Add Member</button>
+      </div>
+      <div class="card" style="padding:0;overflow-x:auto;" id="m-table"></div>
+    </div>
     <div class="page" id="pg-hunters"><div class="search-bar"><input type="text" placeholder="Search hunters..." id="h-search" oninput="loadHunters()"><select id="h-filter" onchange="loadHunters()"><option value="">All</option><option value="live">Live</option><option value="incomplete">Incomplete</option><option value="suspended">Suspended</option></select></div><div class="card" style="padding:0;overflow-x:auto;" id="h-table"></div></div>
     <div class="page" id="pg-farmers"><div class="search-bar"><input type="text" placeholder="Search farmers..." id="f-search" oninput="loadFarmers()"></div><div class="card" style="padding:0;overflow-x:auto;" id="f-table"></div></div>
     <div class="page" id="pg-jobs"><div class="search-bar"><input type="text" placeholder="Search jobs..." id="j-search" oninput="loadJobs()"><select id="j-filter" onchange="loadJobs()"><option value="">All</option><option value="open">Open</option><option value="filled">Filled</option><option value="closed">Closed</option></select></div><div class="card" style="padding:0;overflow-x:auto;" id="j-table"></div></div>
