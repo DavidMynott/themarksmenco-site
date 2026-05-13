@@ -171,7 +171,7 @@ body{font-family:'DM Sans',sans-serif;color:var(--text-dark);background:var(--cr
   <div class="topbar"><h1 id="page-title">Dashboard</h1><span style="font-size:0.75rem;color:var(--text-lt);" id="topbar-date"></span></div>
   <div class="content">
     <div class="page active" id="pg-dashboard"><div id="dash-stats" class="stats-grid"></div><div id="dash-panels" style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;"></div></div>
-    <div class="page" id="pg-members"><div class="search-bar"><input type="text" placeholder="Search by name, email, or member number..." id="m-search" oninput="loadMembers()"><select id="m-filter" onchange="loadMembers()"><option value="">All</option><option value="active">Active</option><option value="pending_payment">Pending</option><option value="lapsed">Lapsed</option><option value="cancelled">Cancelled</option></select></div><div class="card" style="padding:0;overflow-x:auto;" id="m-table"></div></div>
+    <div class="page" id="pg-members"><div class="search-bar"><input type="text" placeholder="Search by name, email, or member number..." id="m-search" oninput="loadMembers()"><select id="m-filter" onchange="loadMembers()"><option value="">All</option><option value="active">Active</option><option value="pending_payment">Pending</option><option value="lapsed">Lapsed</option><option value="cancelled">Cancelled</option></select><button class="btn btn-primary btn-sm" onclick="openAddMember()">+ Add Member</button></div><div class="card" style="padding:0;overflow-x:auto;" id="m-table"></div></div>
     <div class="page" id="pg-hunters"><div class="search-bar"><input type="text" placeholder="Search hunters..." id="h-search" oninput="loadHunters()"><select id="h-filter" onchange="loadHunters()"><option value="">All</option><option value="live">Live</option><option value="incomplete">Incomplete</option><option value="suspended">Suspended</option></select></div><div class="card" style="padding:0;overflow-x:auto;" id="h-table"></div></div>
     <div class="page" id="pg-farmers"><div class="search-bar"><input type="text" placeholder="Search farmers..." id="f-search" oninput="loadFarmers()"></div><div class="card" style="padding:0;overflow-x:auto;" id="f-table"></div></div>
     <div class="page" id="pg-jobs"><div class="search-bar"><input type="text" placeholder="Search jobs..." id="j-search" oninput="loadJobs()"><select id="j-filter" onchange="loadJobs()"><option value="">All</option><option value="open">Open</option><option value="filled">Filled</option><option value="closed">Closed</option></select></div><div class="card" style="padding:0;overflow-x:auto;" id="j-table"></div></div>
@@ -251,6 +251,36 @@ function editMember(id){
 async function saveMbr(id){await U("aha_membership",id,{full_name:document.getElementById("em-name").value,member_number:document.getElementById("em-num").value||null,email:document.getElementById("em-email").value,phone:document.getElementById("em-phone").value,state:document.getElementById("em-state").value,status:document.getElementById("em-status").value,payment_status:document.getElementById("em-pay").value,payment_method:document.getElementById("em-pm").value||null,payment_ref:document.getElementById("em-pr").value||null,square_order_id:document.getElementById("em-sq").value||null,current_period_start:document.getElementById("em-ps").value||null,current_period_end:document.getElementById("em-pe").value||null,notes:document.getElementById("em-notes").value||null});closeModal();loadMembers()}
 async function delMbr(id){await D("aha_membership",id);closeModal();loadMembers()}
 async function activateMbr(id){try{const r=await fetch(SB+"/functions/v1/square-payment-webhook",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"payment.updated",data:{object:{payment:{id:"manual-"+Date.now(),status:"COMPLETED",amount_money:{amount:19800,currency:"AUD"},order_id:"manual"}}}})});const d=await r.json();if(d.success)alert("Activated! "+d.member_number+"\nEmail: "+(d.email_sent?"Sent":"Failed"));else alert("Error: "+(d.error||"Unknown"))}catch(e){alert("Error: "+e.message)}closeModal();loadMembers()}
+
+function openAddMember(){
+  openModal("<div class=modal-header><h2>Add New Member</h2><button class=modal-close onclick=closeModal()>&times;</button></div>"
+    +"<div class=form-row><div class=fg><label>Full Name *</label><input id=am-name placeholder='First Last'></div><div class=fg><label>Email *</label><input id=am-email placeholder='email@example.com'></div></div>"
+    +"<div class=form-row><div class=fg><label>Phone</label><input id=am-phone placeholder='04XX XXX XXX'></div><div class=fg><label>State</label><select id=am-state><option value=''>Select</option>"+sel(states,"")+"</select></div></div>"
+    +"<div class=form-row><div class=fg><label>Status</label><select id=am-status><option value='active'>Active</option><option value='pending_payment'>Pending Payment</option></select></div><div class=fg><label>Payment Status</label><select id=am-pay><option value='paid'>Paid</option><option value='pending_payment'>Pending</option></select></div></div>"
+    +"<div class=fg><label>Payment Method</label><input id=am-pm placeholder='square / legacy / manual'></div>"
+    +"<div class=fg><label>Notes</label><textarea id=am-notes placeholder='Optional notes...'></textarea></div>"
+    +"<div class=modal-actions><button class='btn btn-outline' onclick=closeModal()>Cancel</button><button class='btn btn-primary' onclick=addMember()>Add Member</button></div>");
+}
+
+async function addMember(){
+  var name=document.getElementById("am-name").value.trim();
+  var email=document.getElementById("am-email").value.trim();
+  if(!name||!email){alert("Name and email required.");return;}
+  var data={full_name:name,email:email,phone:document.getElementById("am-phone").value.trim()||null,state:document.getElementById("am-state").value||"WA",status:document.getElementById("am-status").value,payment_status:document.getElementById("am-pay").value,payment_method:document.getElementById("am-pm").value||"manual",notes:document.getElementById("am-notes").value||null,current_period_start:new Date().toISOString(),current_period_end:new Date(Date.now()+365*24*60*60*1000).toISOString(),activated_at:new Date().toISOString()};
+  var result=await P("aha_membership",data);
+  if(result&&result.length>0){
+    // Generate member number
+    var all=await G("aha_membership","select=member_number&member_number=not.is.null&order=member_number.desc&limit=1");
+    var nextNum=3;
+    if(all.length>0){var last=all[0].member_number;var num=parseInt(last.split("-")[2]);nextNum=num+1;}
+    var newNum="AHA-2026-"+String(nextNum).padStart(5,"0");
+    await U("aha_membership",result[0].id,{member_number:newNum});
+    alert("Member added: "+newNum+" — "+name);
+  } else {
+    alert("Error adding member. Check if email already exists.");
+  }
+  closeModal();loadMembers();
+}
 
 // HUNTERS
 async function loadHunters(){
