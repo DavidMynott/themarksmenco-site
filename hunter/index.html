@@ -648,7 +648,9 @@ body{font-family:'DM Sans',sans-serif;color:var(--text-dark);background:var(--cr
       <div class="fg"><label>Email *</label><input type="email" id="profile-email" placeholder="Confirm your email"></div>
     </div>
 
-    <div style="display:flex;gap:0.625rem;justify-content:flex-end;margin-top:0.5rem;">
+    <div style="display:flex;gap:0.625rem;justify-content:flex-end;align-items:center;margin-top:0.5rem;flex-wrap:wrap;">
+      <span id="draft-saved-note" style="font-size:0.75rem;color:var(--text-mid);margin-right:auto;"></span>
+      <button class="btn btn-outline" onclick="saveProfileDraft(false)">Save Progress</button>
       <button class="btn btn-secondary" onclick="showPage('preview')">Preview Profile</button>
       <button class="btn btn-primary" onclick="submitProfile()">Submit for Review →</button>
     </div>
@@ -996,6 +998,182 @@ async function supabaseQuery(table, column, value) {
   return data.length > 0 ? data[0] : null;
 }
 
+// Write helper: upsert a row (insert or update on conflict)
+async function supabaseUpsert(table, row, onConflict) {
+  if (SUPABASE_URL.includes('YOUR-PROJECT-ID')) return true; // Demo mode
+  const url = `${SUPABASE_URL}/rest/v1/${table}` +
+    (onConflict ? `?on_conflict=${onConflict}` : '');
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'resolution=merge-duplicates,return=minimal'
+    },
+    body: JSON.stringify(row)
+  });
+  return r.ok;
+}
+
+// Write helper: PATCH (update existing rows matching a filter)
+async function supabasePatch(table, column, value, updates) {
+  if (SUPABASE_URL.includes('YOUR-PROJECT-ID')) return true; // Demo mode
+  const r = await fetch(
+    `${SUPABASE_URL}/rest/v1/${table}?${column}=eq.${encodeURIComponent(value)}`, {
+    method: 'PATCH',
+    headers: {
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=minimal'
+    },
+    body: JSON.stringify(updates)
+  });
+  return r.ok;
+}
+
+// =====================================================
+// PROGRESS PERSISTENCE  (the real fix)
+// Saves training progress to Supabase so it survives
+// logout, browser close, and switching devices.
+// =====================================================
+const MODULE_KEYS = ['module1','module2','module3','module4','module5','module6'];
+
+async function loadMemberProgress() {
+  if (!currentMember || !currentMember.member_number) return;
+  if (SUPABASE_URL.includes('YOUR-PROJECT-ID')) return;
+  try {
+    // Module progress
+    const r = await fetch(
+      `${SUPABASE_URL}/rest/v1/aha_training_progress?member_number=eq.${encodeURIComponent(currentMember.member_number)}&select=module_key,completed`, {
+      headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
+    });
+    if (r.ok) {
+      const rows = await r.json();
+      completedModules = [];
+      rows.forEach(row => {
+        if (row.completed) {
+          const idx = MODULE_KEYS.indexOf(row.module_key);
+          if (idx >= 0 && !completedModules.includes(idx)) completedModules.push(idx);
+        }
+      });
+      completedModules.sort((a,b) => a-b);
+    }
+    // Certification flags (handbook / shooting / certificate)
+    if (currentMember.member_id) {
+      const cr = await fetch(
+        `${SUPABASE_URL}/rest/v1/aha_certification?member_id=eq.${encodeURIComponent(currentMember.member_id)}&select=*`, {
+        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
+      });
+      if (cr.ok) {
+        const c = await cr.json();
+        if (c.length) {
+          handbookComplete = !!c[0].handbook_complete;
+          if (c[0].shooting_test_status) currentMember.shooting_test_status = c[0].shooting_test_status;
+          if (c[0].certificate_number) currentMember.certificate_number = c[0].certificate_number;
+        }
+      }
+    }
+    // Saved profile/bio draft
+    await loadProfileDraft();
+  } catch (e) { console.error('loadMemberProgress', e); }
+}
+
+async function saveModuleComplete(moduleIndex) {
+  if (!currentMember || !currentMember.member_number) return;
+  const titles = {
+    module1:'The Professional Pest Management Hunter',
+    module2:'Working With Farmers',
+    module3:'Legal & Ethical Compliance',
+    module4:'Firearms Safety & Field Conduct',
+    module5:'Species, Welfare & Dispatch',
+    module6:'Record-Keeping & Being an Ambassador'
+  };
+  const key = MODULE_KEYS[moduleIndex];
+  const ok = await supabaseUpsert('aha_training_progress', {
+    member_number: currentMember.member_number,
+    member_id: currentMember.member_id || null,
+    module_key: key,
+    module_title: titles[key] || key,
+    completed: true,
+    score: 100,
+    attempts: 1,
+    completed_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  }, 'member_number,module_key');
+  if (!ok) { alert('Could not save your progress — check your connection and try again. Your module is not yet saved.'); return false; }
+  // If all 6 done, flip training_complete on certification
+  if (completedModules.length >= 6 && currentMember.member_id) {
+    await supabasePatch('aha_certification', 'member_id', currentMember.member_id, {
+      training_complete: true, modules_completed: 6,
+      foundation_status: 'completed', foundation_completed_at: new Date().toISOString()
+    });
+  }
+  return true;
+}
+
+async function saveProfileDraft(silent) {
+  if (!currentMember || !currentMember.member_number) return;
+  const draft = collectProfileDraft();
+  const ok = await supabaseUpsert('aha_profile_draft', {
+    member_number: currentMember.member_number,
+    draft_json: draft,
+    updated_at: new Date().toISOString()
+  }, 'member_number');
+  const note = document.getElementById('draft-saved-note');
+  if (note) note.textContent = ok ? ('Saved ' + new Date().toLocaleTimeString()) : 'Save failed — check connection';
+  if (!silent && ok) alert('Progress saved. You can safely come back later.');
+  if (!silent && !ok) alert('Could not save — check your connection and try again.');
+}
+
+async function loadProfileDraft() {
+  if (!currentMember || !currentMember.member_number) return;
+  if (SUPABASE_URL.includes('YOUR-PROJECT-ID')) return;
+  try {
+    const r = await fetch(
+      `${SUPABASE_URL}/rest/v1/aha_profile_draft?member_number=eq.${encodeURIComponent(currentMember.member_number)}&select=draft_json`, {
+      headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
+    });
+    if (!r.ok) return;
+    const rows = await r.json();
+    if (rows.length && rows[0].draft_json) applyProfileDraft(rows[0].draft_json);
+  } catch (e) { console.error('loadProfileDraft', e); }
+}
+
+function collectProfileDraft() {
+  const d = {};
+  const pb = document.getElementById('page-profile-builder');
+  if (!pb) return d;
+  pb.querySelectorAll('input, textarea, select').forEach((el, i) => {
+    if (el.type === 'file') return;
+    const key = el.id || ('f_' + i);
+    if (el.type === 'checkbox') d[key] = el.checked;
+    else d[key] = el.value;
+  });
+  return d;
+}
+
+function applyProfileDraft(d) {
+  const pb = document.getElementById('page-profile-builder');
+  if (!pb) return;
+  pb.querySelectorAll('input, textarea, select').forEach((el, i) => {
+    if (el.type === 'file') return;
+    const key = el.id || ('f_' + i);
+    if (!(key in d)) return;
+    if (el.type === 'checkbox') {
+      el.checked = !!d[key];
+      const row = el.closest('.species-row');
+      if (row) row.classList.toggle('selected', el.checked);
+    } else if (!el.readOnly && el.value === '') {
+      el.value = d[key];
+    } else if (!el.readOnly) {
+      el.value = d[key];
+    }
+  });
+  if (typeof togglePermitWarning === 'function') togglePermitWarning();
+}
+
 // =====================================================
 // LOGIN & SIGNUP
 // =====================================================
@@ -1087,7 +1265,7 @@ async function verifyAHASignup() {
   }
 }
 
-function hunterSignup() {
+async function hunterSignup() {
   const first = document.getElementById('signup-first').value.trim();
   const last = document.getElementById('signup-last').value.trim();
   const email = document.getElementById('signup-email').value.trim();
@@ -1101,19 +1279,34 @@ function hunterSignup() {
   if (!first || !last || !email || !phone || !location || !state) { alert('Please fill in all required fields.'); return; }
   if (pw.length < 8) { alert('Password must be at least 8 characters.'); return; }
   if (pw !== pwConfirm) { alert('Passwords do not match.'); return; }
-  
-  // In production: create Supabase auth user, link to AHA membership, store profile details
+
   currentMember = {
     member_number: verifiedAHAMember.member_number,
+    member_id: verifiedAHAMember.member_id || null,
     full_name: first + ' ' + last,
     email: email,
     membership_status: 'active',
     current_period_end: verifiedAHAMember.current_period_end,
-    foundation_status: 'not_started',
-    shooting_test_status: 'not_submitted',
-    certificate_number: null
+    foundation_status: verifiedAHAMember.foundation_status || 'not_started',
+    shooting_test_status: verifiedAHAMember.shooting_test_status || 'not_submitted',
+    certificate_number: verifiedAHAMember.certificate_number || null
   };
-  
+
+  // Persist a hunter profile so the account actually exists on return.
+  // Returning members sign in via member_verification (their AHA record),
+  // and their saved progress/profile is keyed to member_number.
+  await supabaseUpsert('hunter_profiles', {
+    member_number: currentMember.member_number,
+    member_id: currentMember.member_id,
+    display_name: currentMember.full_name,
+    email: email,
+    phone: phone,
+    location: location,
+    state: state,
+    profile_status: 'incomplete',
+    updated_at: new Date().toISOString()
+  }, 'member_number');
+
   enterPortal();
 }
 
@@ -1129,10 +1322,19 @@ function enterPortal() {
   if (currentMember.foundation_status === 'completed') {
     completedModules = [0,1,2,3,4,5];
   }
-  
+
+  // Persist the verified session so a refresh doesn't dump them back to the gate
+  try { sessionStorage.setItem('tmc_member', JSON.stringify(currentMember)); } catch(e){}
+
   // Load notifications
   loadDemoNotifications();
-  
+
+  // Pull real saved progress from Supabase, THEN render
+  loadMemberProgress().then(() => {
+    renderModules();
+    updateStats();
+  });
+
   renderModules();
   updateStats();
   showPage('dashboard');
@@ -1244,19 +1446,25 @@ function submitQuiz() {
   
   if (correct >= passThreshold) {
     // Passed
-    resultEl.innerHTML = `<div class="alert alert-success"><strong>Passed — ${correct}/${total}</strong><br>Module complete. Returning to dashboard.</div>`;
+    resultEl.innerHTML = `<div class="alert alert-success"><strong>Passed — ${correct}/${total}</strong><br>Saving your progress…</div>`;
     resultEl.style.display = 'block';
-    
+
     if (!completedModules.includes(currentModule)) {
       completedModules.push(currentModule);
+      completedModules.sort((a,b) => a-b);
     }
-    
-    setTimeout(() => {
-      renderModules();
-      updateStats();
-      showPage('dashboard');
-      resultEl.style.display = 'none';
-    }, 1500);
+
+    saveModuleComplete(currentModule).then(saved => {
+      if (saved) {
+        resultEl.innerHTML = `<div class="alert alert-success"><strong>Passed — ${correct}/${total}</strong><br>Module complete and saved. Returning to dashboard.</div>`;
+      }
+      setTimeout(() => {
+        renderModules();
+        updateStats();
+        showPage('dashboard');
+        resultEl.style.display = 'none';
+      }, 1500);
+    });
   } else {
     // Failed
     resultEl.innerHTML = `<div class="alert alert-warning"><strong>${correct}/${total} — you need at least ${passThreshold} to pass.</strong><br>Review the module content above and try again. You can retake the quiz as many times as needed.</div>`;
@@ -1271,6 +1479,11 @@ function submitQuiz() {
 function downloadHandbook() {
   // Mark handbook as downloaded — unlocks shooting qualification
   handbookComplete = true;
+  if (currentMember && currentMember.member_id) {
+    supabasePatch('aha_certification', 'member_id', currentMember.member_id, {
+      handbook_complete: true, updated_at: new Date().toISOString()
+    });
+  }
   renderModules();
   updateStats();
 }
@@ -1306,6 +1519,13 @@ function submitShooting() {
     return;
   }
   currentMember.shooting_test_status = 'pending';
+  if (currentMember && currentMember.member_id) {
+    supabasePatch('aha_certification', 'member_id', currentMember.member_id, {
+      shooting_test_status: 'pending',
+      shooting_test_submitted_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    });
+  }
   renderModules();
   updateStats();
   alert('Shooting qualification submitted. You\'ll be notified within 5 business days.');
@@ -1336,8 +1556,48 @@ function togglePermitWarning() {
   if (w) w.classList.toggle('visible', permit);
 }
 
-function submitProfile() {
-  alert('Your profile is now live on The Marksmen Co. Farmers can see you immediately. Our team will review your details in the background — if anything needs updating, we\'ll be in touch.');
+async function submitProfile() {
+  if (!currentMember || !currentMember.member_number) {
+    alert('Session expired. Please sign in again.');
+    showPage('gate');
+    return;
+  }
+  const draft = collectProfileDraft();
+  // Pull the key visible fields out of the draft for the structured columns
+  const pb = document.getElementById('page-profile-builder');
+  const inputs = pb ? pb.querySelectorAll('input[type=text], textarea') : [];
+  let displayName = '', location = '', bio = '';
+  if (inputs.length) {
+    // display name + location are the first two text inputs in the public profile section
+    inputs.forEach(el => {
+      const ph = (el.placeholder || '').toLowerCase();
+      if (ph.includes('how you want to appear')) displayName = el.value.trim();
+      if (ph.includes('northam')) location = el.value.trim();
+      if (ph.includes('pest management work')) bio = el.value.trim();
+    });
+  }
+  const phone = (document.getElementById('profile-phone')||{}).value || '';
+  const email = (document.getElementById('profile-email')||{}).value || '';
+
+  const row = {
+    member_number: currentMember.member_number,
+    member_id: currentMember.member_id || null,
+    display_name: displayName || currentMember.full_name,
+    email: email || currentMember.email,
+    phone: phone,
+    location: location,
+    bio: bio,
+    profile_status: 'live',
+    updated_at: new Date().toISOString()
+  };
+  const ok = await supabaseUpsert('hunter_profiles', row, 'member_number');
+  // Always keep the draft too, so nothing is ever lost
+  await saveProfileDraft(true);
+  if (ok) {
+    alert('Your profile is now live on The Marksmen Co. Farmers can see you immediately. Our team will review your details in the background — if anything needs updating, we\'ll be in touch.');
+  } else {
+    alert('Your details were saved as a draft, but going live failed — check your connection and press Submit again. Nothing has been lost.');
+  }
   showPage('dashboard');
 }
 
@@ -1626,10 +1886,63 @@ function showPage(pageId) {
       <button class="nav-btn ${pageId==='dashboard'?'active':''}" onclick="showPage('dashboard')">Dashboard</button>
       <button class="nav-btn ${pageId==='map'?'active':''}" onclick="showPage('map')">Map</button>
       <button class="nav-btn ${pageId==='profile-builder'?'active':''}" onclick="showPage('profile-builder')">Profile</button>
-      <button class="nav-btn" onclick="showPage('gate')">Sign Out</button>
+      <button class="nav-btn" onclick="signOut()">Sign Out</button>
     `;
   }
 }
+
+function signOut() {
+  try { sessionStorage.removeItem('tmc_member'); } catch(e){}
+  currentMember = null;
+  completedModules = [];
+  handbookComplete = false;
+  showPage('gate');
+}
+
+// =====================================================
+// SESSION RESTORE + DRAFT AUTO-SAVE
+// Stops the auto-logout from dumping people back to the
+// gate and wiping unsaved bio work.
+// =====================================================
+window.addEventListener('DOMContentLoaded', () => {
+  try {
+    const saved = sessionStorage.getItem('tmc_member');
+    if (saved) {
+      currentMember = JSON.parse(saved);
+      if (currentMember && currentMember.member_number) {
+        enterPortal();
+        return;
+      }
+    }
+  } catch (e) { console.error('session restore', e); }
+});
+
+// Auto-save the profile/bio draft every 30s and on tab close,
+// so an unexpected logout can never wipe unsaved work again.
+setInterval(() => {
+  if (currentMember && currentMember.member_number) {
+    const pb = document.getElementById('page-profile-builder');
+    if (pb && pb.classList.contains('active')) saveProfileDraft(true);
+  }
+}, 30000);
+window.addEventListener('beforeunload', () => {
+  if (currentMember && currentMember.member_number) {
+    const pb = document.getElementById('page-profile-builder');
+    if (pb && pb.classList.contains('active')) {
+      try {
+        navigator.sendBeacon &&
+        navigator.sendBeacon(
+          `${SUPABASE_URL}/rest/v1/aha_profile_draft?on_conflict=member_number`,
+          new Blob([JSON.stringify({
+            member_number: currentMember.member_number,
+            draft_json: collectProfileDraft(),
+            updated_at: new Date().toISOString()
+          })], { type: 'application/json' })
+        );
+      } catch(e){}
+    }
+  }
+});
 
 // =====================================================
 // STATS

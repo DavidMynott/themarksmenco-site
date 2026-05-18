@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AHA / TMC — Admin Portal [DEPLOY TEST v13]</title>
+<title>AHA / TMC — Admin Portal</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -258,7 +258,7 @@ function editMember(id){
 }
 
 async function saveMbr(id){await U("aha_membership",id,{full_name:document.getElementById("em-name").value,member_number:document.getElementById("em-num").value||null,email:document.getElementById("em-email").value,phone:document.getElementById("em-phone").value,state:document.getElementById("em-state").value,status:document.getElementById("em-status").value,payment_status:document.getElementById("em-pay").value,payment_method:document.getElementById("em-pm").value||null,payment_ref:document.getElementById("em-pr").value||null,square_order_id:document.getElementById("em-sq").value||null,current_period_start:document.getElementById("em-ps").value||null,current_period_end:document.getElementById("em-pe").value||null,notes:document.getElementById("em-notes").value||null});closeModal();loadMembers()}
-async function delMbr(id){await D("aha_membership",id);closeModal();loadMembers()}
+async function delMbr(id){const m=_m.find(x=>x.id===id);const who=m?(m.full_name+" ("+(m.member_number||"no number")+", "+m.email+")"):"this member";if(!confirm("PERMANENTLY DELETE:\n\n"+who+"\n\nThis cannot be undone. Continue?"))return;const r=await D("aha_membership",id);if(r&&r.ok){alert("Deleted: "+who);closeModal();loadMembers();}else{alert("Delete failed. The member was NOT removed. Check connection and try again.");}}
 async function activateMbr(id){try{const r=await fetch(SB+"/functions/v1/square-payment-webhook",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"payment.updated",data:{object:{payment:{id:"manual-"+Date.now(),status:"COMPLETED",amount_money:{amount:19800,currency:"AUD"},order_id:"manual"}}}})});const d=await r.json();if(d.success)alert("Activated! "+d.member_number+"\nEmail: "+(d.email_sent?"Sent":"Failed"));else alert("Error: "+(d.error||"Unknown"))}catch(e){alert("Error: "+e.message)}closeModal();loadMembers()}
 
 function openAddMember(){
@@ -386,4 +386,4 @@ document.getElementById("topbar-date").textContent=new Date().toLocaleDateString
 loadDash();
 </script>
 </body>
-</html><!-- Deploy: Wed May 13 18:43:46 AWST 2026 -->
+</html>
